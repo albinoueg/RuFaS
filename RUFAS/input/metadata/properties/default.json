@@ -4276,6 +4276,12 @@
     "ration_formulation_parameters": {
       "type": "object",
       "description": "Global parameters controlling ration formulation behavior.",
+      "optimization_method": {
+        "type": "string",
+        "description": "Ration solver: SLSQP (reference) or SLP (sequential linear programs with nonlinear validation).",
+        "pattern": "^(SLSQP|SLP)$",
+        "default": "SLSQP"
+      },
       "milk_reduction_maximum": {
         "type": "number",
         "description": "Allowable amount of milk reduction (kg) when dietary nutrient supply cannot meet animal requirements.",

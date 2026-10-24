@@ -5,6 +5,7 @@ from RUFAS.biophysical.animal.data_types.nutrition_data_structures import (
     NutritionEvaluationResults,
 )
 from RUFAS.general_constants import GeneralConstants
+from RUFAS.data_structures.feed_storage_to_animal_connection import NutrientStandard
 
 
 class NutritionEvaluator:
@@ -16,6 +17,7 @@ class NutritionEvaluator:
         requirements: NutritionRequirements,
         supply: NutritionSupply,
         is_cow: bool,
+        nutrient_standard: NutrientStandard = NutrientStandard.NRC,
     ) -> tuple[bool, NutritionEvaluationResults]:
         """
         Calculates the difference between nutrient demand and supply, if any.
@@ -55,6 +57,22 @@ class NutritionEvaluator:
 
         checkers = cow_energy_nutrition_checkers if is_cow else heifer_energy_nutrition_checkers
         results = {name: method(requirements, supply) for name, method in checkers.items()}
+
+        if nutrient_standard is NutrientStandard.NASEM:
+            # NASEM stores the common net-energy supply in lactation_energy;
+            # the NRC-specific maintenance/growth supply fields are zero.
+            energy = supply.lactation_energy
+            results["total_energy"] = energy - requirements.total_energy_requirement
+            results["maintenance"] = energy - requirements.maintenance_energy - requirements.activity_energy
+            results["growth"] = energy - requirements.growth_energy
+            if is_cow:
+                results["lactation"] = energy - requirements.lactation_energy - requirements.pregnancy_energy
+
+        # Only absorb rounding-scale residuals, never meaningful shortages.
+        for name, value in results.items():
+            tolerance = 1e-4 if name in {"calcium", "phosphorus", "protein"} else 1e-6
+            if abs(value) <= tolerance:
+                results[name] = 0.0
 
         evaluation = NutritionEvaluationResults(
             total_energy=results.get("total_energy"),
@@ -258,7 +276,7 @@ class NutritionEvaluator:
         if ndf_percentage < AnimalModuleConstants.MINIMUM_RATION_NDF:
             return ndf_percentage - AnimalModuleConstants.MINIMUM_RATION_NDF
         elif ndf_percentage > AnimalModuleConstants.MAXIMUM_RATION_NDF:
-            return ndf_percentage - AnimalModuleConstants.MAXIMUM_RATION_NDF
+            return AnimalModuleConstants.MAXIMUM_RATION_NDF - ndf_percentage
         else:
             return 0.0
 
@@ -311,7 +329,7 @@ class NutritionEvaluator:
             return 0.0
         fat_percentage = supply.fat_supply / supply.dry_matter * GeneralConstants.FRACTION_TO_PERCENTAGE
 
-        return AnimalModuleConstants.MAXIMUM_RATION_FAT - fat_percentage
+        return min(0.0, AnimalModuleConstants.MAXIMUM_RATION_FAT - fat_percentage)
 
     @classmethod
     def _calculate_dry_matter_intake(cls, requirements: NutritionRequirements, supply: NutritionSupply) -> float:

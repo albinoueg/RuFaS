@@ -209,6 +209,10 @@ class HerdManager:
 
         self.is_ration_defined_by_user = is_ration_defined_by_user
         ration_feed_config = self.im.get_data("feed")
+        method = ration_feed_config["ration_formulation_parameters"].get("optimization_method", "SLSQP")
+        if method not in ("SLSQP", "SLP"):
+            raise ValueError("optimization_method must be SLSQP or SLP")
+        RationManager.optimization_method = method
         if self.is_ration_defined_by_user:
             RationManager.set_user_defined_rations(ration_feed_config)
             RationManager.set_user_defined_ration_tolerance(ration_feed_config)
@@ -1403,7 +1407,8 @@ class HerdManager:
                 )
                 pen_available_feeds = self._find_pen_available_feeds(available_feeds, user_defined_ration_feed_ids)
             else:
-                pen_available_feeds = self._find_pen_available_feeds(available_feeds, RationManager.ration_feeds)
+                ration_feed_ids = RationManager.get_ration_feeds(pen_with_min_stocking_density.animal_combination)
+                pen_available_feeds = self._find_pen_available_feeds(available_feeds, ration_feed_ids)
             self._reformulate_ration_single_pen(
                 pen=pen_with_min_stocking_density,
                 pen_available_feeds=pen_available_feeds,
@@ -1978,6 +1983,8 @@ class HerdManager:
             for animal in pen.animals_in_pen:
                 pen.animals_in_pen[animal].daily_milking_update_without_history()
         if pen.animal_combination == AnimalCombination.CALF:
+            if not pen_available_feeds:
+                raise ValueError(f"No configured calf feeds available for pen {pen.id}.")
             if not self.is_ration_defined_by_user:
                 ration_fraction = 100 / len(pen_available_feeds)
                 RationManager.user_defined_rations = {}

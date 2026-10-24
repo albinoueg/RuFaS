@@ -1261,6 +1261,10 @@ class Pen:
             previous_ration=previous_ration,
             user_defined_ration_dictionary=user_defined_ration_dictionary,
             user_defined_ration_tolerance=tolerance,
+            animal_nasem_states=[
+                (animal.body_weight, animal.enteric_methane, animal.digestive_system.manure_excretion.urine_nitrogen)
+                for animal in self.animals_in_pen.values()
+            ] if nutrient_standard is NutrientStandard.NASEM else None,
         )
 
     def _calculate_pen_nasem_averages(self) -> tuple[float, float]:
@@ -1294,6 +1298,7 @@ class Pen:
             self.average_nutrition_requirements,
             self.average_nutrition_supply,
             self.animal_combination is AnimalCombination.LAC_COW,
+            nutrient_standard=next(iter(self.animals_in_pen.values())).nutrient_standard,
         )
         self.average_nutrition_evaluation = (
             evaluation if self.is_populated else NutritionEvaluationResults.make_empty_evaluation_results()
@@ -1317,6 +1322,7 @@ class Pen:
             self.average_nutrition_requirements,
             self.average_nutrition_supply,
             self.animal_combination is AnimalCombination.LAC_COW,
+            nutrient_standard=next(iter(self.animals_in_pen.values())).nutrient_standard,
         )
         self.average_nutrition_evaluation = (
             evaluation if self.is_populated else NutritionEvaluationResults.make_empty_evaluation_results()
@@ -1408,10 +1414,25 @@ class Pen:
         )
         self.set_animal_nutritional_supply(feeds_used=pen_available_feeds, ration_formulation=ration)
 
+        if animal_combination == AnimalCombination.CALF:
+            # Calf requirements contain unavailable mineral/MP targets and
+            # adult fibre/fat limits do not validate a milk/starter protocol.
+            self.average_nutrition_evaluation = NutritionEvaluationResults.make_empty_evaluation_results()
+            self.average_nutrition_evaluation.evaluation_available = False
+            self.ration = ration
+            self.om.add_warning(
+                "Calf ration validation unavailable",
+                "Milk/starter ration applied without adult ration acceptance criteria. "
+                "A calf-specific protocol and complete MP/Ca/P requirements are needed for validation.",
+                {"class": "Pen", "function": "use_user_defined_ration", "pen_id": self.id},
+            )
+            return
+
         is_ration_adequate, evaluation_result = NutritionEvaluator.evaluate_nutrition_supply(
             self.average_nutrition_requirements,
             self.average_nutrition_supply,
             (animal_combination == AnimalCombination.LAC_COW),
+            nutrient_standard=next(iter(self.animals_in_pen.values())).nutrient_standard,
         )
         if animal_combination == AnimalCombination.LAC_COW:
             ration_sufficient_for_milk_production = True
@@ -1431,6 +1452,7 @@ class Pen:
                     self.average_nutrition_requirements,
                     self.average_nutrition_supply,
                     (animal_combination == AnimalCombination.LAC_COW),
+                    nutrient_standard=next(iter(self.animals_in_pen.values())).nutrient_standard,
                 )
         self.average_nutrition_evaluation = (
             evaluation_result if self.is_populated else NutritionEvaluationResults.make_empty_evaluation_results()

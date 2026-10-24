@@ -238,9 +238,7 @@ class CalfRationManager:
         starter_cp_intake = GeneralConstants.PERCENTAGE_TO_FRACTION * starter.CP * starter_intake
         total_cp_intake = milk_cp_intake + starter_cp_intake
 
-        adp_intake = (
-            0.93 * milk_cp_intake / total_cp_intake + 0.75 * starter_cp_intake / total_cp_intake
-        ) * GeneralConstants.KG_TO_GRAMS
+        adp_intake = cls.calculate_apparent_digestible_protein_intake(milk_cp_intake, starter_cp_intake)
 
         milk_proportion = (whole_milk_intake + milk_replacer_intake) / dry_matter_intake
         starter_proportion = starter_intake / dry_matter_intake
@@ -265,3 +263,12 @@ class CalfRationManager:
         }
 
         return animal_intake
+
+    @staticmethod
+    def calculate_apparent_digestible_protein_intake(milk_cp_kg: float, starter_cp_kg: float) -> float:
+        """Return digestible protein in grams from CP intakes in kg, not fractions.
+
+        The existing milk/starter digestibility coefficients are preserved.
+        A weighted digestibility fraction alone is not a protein mass.
+        """
+        return (0.93 * milk_cp_kg + 0.75 * starter_cp_kg) * GeneralConstants.KG_TO_GRAMS

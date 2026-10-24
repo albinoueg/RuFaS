@@ -1,5 +1,6 @@
 import random
 from scipy.optimize import OptimizeResult, minimize
+from RUFAS.biophysical.animal.ration.linearized_optimizer import solve_linearized
 import numpy as np
 import numpy.typing as npt
 from typing import Callable, Any, Sequence, Optional
@@ -107,6 +108,7 @@ class RationConfig:
         self.initial_dry_matter_requirement: float = initial_dry_matter_requirement
         self.initial_protein_requirement: float = initial_protein_requirement
         self.animal_combination = animal_combination
+        self.animal_nasem_states: list[tuple[float, float, float]] | None = None
         self.dmi_constraint_fraction: float = RationManager.effective_dmi_constraint_fraction(animal_combination)
         self.dmi_requirement_boost: float = RationManager.effective_dmi_requirement_boost(animal_combination)
 
@@ -261,7 +263,9 @@ class RationOptimizer:
         ration: dict[str, float | str] = {}
         for position_in_list in range(len(pen_available_feeds)):
             kg_to_feed = solution.x[position_in_list]
-            ration[getattr(pen_available_feeds[position_in_list], "rufas_id")] = round(kg_to_feed, 6)
+            # Keep solver precision when applying the diet. Rounding an active
+            # constraint to six decimals can turn a feasible solution infeasible.
+            ration[getattr(pen_available_feeds[position_in_list], "rufas_id")] = float(kg_to_feed)
         return ration
 
     @staticmethod
@@ -409,6 +413,23 @@ class RationOptimizer:
         feeds = RationOptimizer.convert_decision_vec_to_feeds(ration_configuration, decision_vector)
         dry_matter_intake = sum(decision_vector)
         total_starch = sum([feed.amount * feed.info.starch * GeneralConstants.PERCENTAGE_TO_FRACTION for feed in feeds])
+
+        animal_states = getattr(ration_configuration, "animal_nasem_states", None)
+        if animal_states:
+            # Match Pen.set_animal_nutritional_supply: evaluate the common diet
+            # for each animal, then average. Energy at mean BW is not the
+            # mean of nonlinear energy calculations across the pen.
+            supplies = [
+                NutritionSupplyCalculator.calculate_NASEM_net_energy(
+                    total_metabolizable_energy=NutritionSupplyCalculator.calculate_NASEM_metabolizable_energy(
+                        feeds=feeds, dry_matter_intake=dry_matter_intake,
+                        body_weight=body_weight, total_starch=total_starch,
+                        enteric_methane=methane, urinary_nitrogen=urine,
+                    )
+                )
+                for body_weight, methane, urine in animal_states
+            ]
+            return sum(supplies) / len(supplies) - ration_configuration.animal_requirements.total_energy_requirement
 
         total_metabolizable_energy = NutritionSupplyCalculator.calculate_NASEM_metabolizable_energy(
             feeds=feeds,
@@ -589,16 +610,24 @@ class RationOptimizer:
         """
         feeds = RationOptimizer.convert_decision_vec_to_feeds(ration_configuration, decision_vector)
         dry_matter_intake = sum(decision_vector)
-        intake_nutrient_discount = NutritionSupplyCalculator.calculate_nutrient_intake_discount(
-            feeds=feeds, body_weight=ration_configuration.pen_average_body_weight
+        animal_states = getattr(ration_configuration, "animal_nasem_states", None)
+        body_weights = (
+            [state[0] for state in animal_states]
+            if animal_states else [ration_configuration.pen_average_body_weight]
         )
-        actual_tdn_percentages = {feed.info.rufas_id: feed.info.TDN * intake_nutrient_discount for feed in feeds}
-        metabolizable_protein_supply = NutritionSupplyCalculator.calculate_metabolizable_protein_supply(
-            feeds=feeds,
-            dry_matter_intake=dry_matter_intake,
-            actual_tdn_percentages=actual_tdn_percentages,
-            body_weight=ration_configuration.pen_average_body_weight,
-        )
+        protein_supplies = []
+        for body_weight in body_weights:
+            intake_nutrient_discount = NutritionSupplyCalculator.calculate_nutrient_intake_discount(
+                feeds=feeds, body_weight=body_weight
+            )
+            actual_tdn_percentages = {feed.info.rufas_id: feed.info.TDN * intake_nutrient_discount for feed in feeds}
+            protein_supplies.append(NutritionSupplyCalculator.calculate_metabolizable_protein_supply(
+                feeds=feeds,
+                dry_matter_intake=dry_matter_intake,
+                actual_tdn_percentages=actual_tdn_percentages,
+                body_weight=body_weight,
+            ))
+        metabolizable_protein_supply = sum(protein_supplies) / len(protein_supplies)
         if use_initial_requirement:
             actual_metabolizable_protein_requirement = ration_configuration.initial_protein_requirement
         else:
@@ -836,6 +865,7 @@ class RationOptimizer:
         previous_ration: dict[RUFAS_ID | str, float | str] | None = None,
         user_defined_ration_dictionary: dict[RUFAS_ID, float] | None = None,
         user_defined_ration_tolerance: float | None = None,
+        animal_nasem_states: list[tuple[float, float, float]] | None = None,
     ) -> tuple[OptimizeResult, RationConfig]:
         """
         Sets up the nutrients and requirements lists into structured inputs for non-linear optimization.
@@ -888,6 +918,7 @@ class RationOptimizer:
             animal_combination,
         )
         sorted_previous_ration = dict(sorted(previous_ration.items())) if previous_ration else None
+        ration_config.animal_nasem_states = animal_nasem_states
         initial_decision_vector = np.array(
             self._build_initial_value(sorted_previous_ration, ration_config), dtype=float
         )
@@ -908,6 +939,11 @@ class RationOptimizer:
 
         constraints_to_use = self._select_constraints(animal_combination)
 
+        if RationManager.optimization_method == "SLP":
+            optimized_ration_attempt = solve_linearized(
+                ration_config.price_list, initial_decision_vector, bounds, constraints_to_use
+            )
+            return optimized_ration_attempt, ration_config
         optimized_ration_attempt = minimize(
             self.objective,
             initial_decision_vector,

@@ -39,6 +39,7 @@ class RationManager:
     """
 
     CALF_DRY_MATTER_INTAKE = 3
+    optimization_method: str = "SLSQP"
 
     _om = OutputManager()
     ration_feeds: dict[AnimalCombination, list[RUFAS_ID]] | None

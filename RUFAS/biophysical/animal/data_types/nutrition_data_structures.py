@@ -431,6 +431,8 @@ class NutritionEvaluationResults:
     forage_ndf_percent: float
     fat_percent: float
 
+    evaluation_available: bool = True
+
     UNITS = {
         "total_energy_difference": MeasurementUnits.MEGACALORIES,
         "maintenance_energy_difference": MeasurementUnits.MEGACALORIES,
@@ -446,6 +448,7 @@ class NutritionEvaluationResults:
     }
 
     REPORT_UNITS = {
+        "evaluation_available": MeasurementUnits.UNITLESS,
         "is_valid_heifer_ration": MeasurementUnits.UNITLESS,
         "is_valid_cow_ration": MeasurementUnits.UNITLESS,
         "total_energy_acceptable": MeasurementUnits.UNITLESS,
@@ -470,6 +473,8 @@ class NutritionEvaluationResults:
     @property
     def is_valid_heifer_ration(self) -> bool:
         """True if evaluated supply meets requirements for heifers, else false."""
+        if not self.evaluation_available:
+            return False
         non_negative_fields = {
             self.maintenance_energy,
             self.growth_energy,
@@ -479,11 +484,14 @@ class NutritionEvaluationResults:
         }
         valid_non_negative_fields = all([field >= 0.0 for field in non_negative_fields])
 
-        return valid_non_negative_fields and self._are_clamped_values_acceptable
+        total_energy_valid = self.total_energy is None or self.total_energy >= 0.0
+        return valid_non_negative_fields and self._are_clamped_values_acceptable and total_energy_valid
 
     @property
     def is_valid_cow_ration(self) -> bool:
         """True if evaluated supply meets requirements for cows, else false."""
+        if not self.evaluation_available:
+            return False
         if self.total_energy is None or self.lactation_energy is None:
             return False
 
@@ -494,12 +502,15 @@ class NutritionEvaluationResults:
     @property
     def report(self) -> dict[str, bool | None]:
         """Returns a dictionary with the evaluation results."""
+        if not self.evaluation_available:
+            return {name: (False if name == "evaluation_available" else None) for name in self.REPORT_UNITS}
         return {
+            "evaluation_available": True,
             "is_valid_heifer_ration": self.is_valid_heifer_ration,
             "is_valid_cow_ration": self.is_valid_cow_ration,
             "total_energy_acceptable": None if self.total_energy is None else self.total_energy >= 0.0,
             "maintenance_energy_acceptable": self.maintenance_energy >= 0.0,
-            "lactation_energy_acceptable": None if self.total_energy is None else self.total_energy >= 0.0,
+            "lactation_energy_acceptable": None if self.lactation_energy is None else self.lactation_energy >= 0.0,
             "growth_energy_acceptable": self.growth_energy >= 0.0,
             "metabolizable_protein_acceptable": self.metabolizable_protein == 0.0,
             "calcium_acceptable": self.calcium >= 0.0,
@@ -520,6 +531,7 @@ class NutritionEvaluationResults:
 
         return NutritionEvaluationResults(
             total_energy=total_energy + other_total_energy,
+            evaluation_available=self.evaluation_available and other.evaluation_available,
             maintenance_energy=self.maintenance_energy + other.maintenance_energy,
             lactation_energy=lactation + other_lactation,
             growth_energy=self.growth_energy + other.growth_energy,
@@ -541,6 +553,7 @@ class NutritionEvaluationResults:
 
         return NutritionEvaluationResults(
             total_energy=total_energy / divisor,
+            evaluation_available=self.evaluation_available,
             maintenance_energy=self.maintenance_energy / divisor,
             lactation_energy=lactation / divisor,
             growth_energy=self.growth_energy / divisor,

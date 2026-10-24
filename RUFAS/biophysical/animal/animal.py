@@ -2622,7 +2622,10 @@ class Animal:
                 growth_energy=calf_requirements["ne_gain"],
                 pregnancy_energy=0.0,
                 lactation_energy=0.0,
-                metabolizable_protein=calf_intake["me_intake"],
+                # A calf MP requirement is not provided by this pathway.
+                # Do not put metabolizable energy (Mcal) in a protein (g) field.
+                # The calf pen is explicitly excluded from adult ration validation.
+                metabolizable_protein=0.0,
                 calcium=0.0,
                 phosphorus=0.0,
                 process_based_phosphorus=0.0,

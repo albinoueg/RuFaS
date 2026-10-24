@@ -409,6 +409,8 @@ class AnimalModuleReporter:
             "forage_ndf_percent_difference": average_nutrition_evaluation.forage_ndf_percent,
             "fat_percent_difference": average_nutrition_evaluation.fat_percent,
         }
+        if not average_nutrition_evaluation.evaluation_available:
+            nutrient_evaluation_results = {name: None for name in nutrient_evaluation_results}
         om.add_variable(
             f"avg_eval_results_for_{pen_base_name}",
             nutrient_evaluation_results,
